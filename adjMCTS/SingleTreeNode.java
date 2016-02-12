@@ -1,19 +1,20 @@
 package controllers.adjMCTS;
 
+import java.util.ArrayList;
 import java.util.Random;
 
-import javax.swing.plaf.nimbus.NimbusLookAndFeel;
-
+import core.game.Observation;
 import core.game.StateObservation;
 import ontology.Types;
 import ontology.Types.ACTIONS;
 import tools.ElapsedCpuTimer;
 import tools.Utils;
+import tools.Vector2d;
 
 public class SingleTreeNode
 {
-    private static final double HUGE_NEGATIVE = -10000000.0;
-    private static final double HUGE_POSITIVE =  10000000.0;
+    private static final double HUGE_NEGATIVE = -1000.0;
+    private static final double HUGE_POSITIVE =  1000.0;
     public static double epsilon = 1e-6;
     public static double egreedyEpsilon = 0.05;
     public StateObservation state;
@@ -22,6 +23,7 @@ public class SingleTreeNode
     public double totValue;
     public double maxValue;
     public double bonusValue;
+    public double penaltyValue;
     public RowOdds repetition;
     public int nVisits;
     public static Random m_rnd;
@@ -39,6 +41,7 @@ public class SingleTreeNode
         totValue = 0.0;
         maxValue = 0.0;
         bonusValue = 0.0;
+        penaltyValue = 0.0;
         repetition = new RowOdds();
         repetition.actionHold = previousRepetition.actionHold;
         repetition.actionNewAction = previousRepetition.actionNewAction;
@@ -109,30 +112,106 @@ public class SingleTreeNode
     	return -1;
     }
 
+    private boolean isSameLength(ArrayList<Observation>[] oldPos, ArrayList<Observation>[] newPos){
+		if((oldPos == null && newPos != null) || (oldPos != null && newPos == null)){
+			return false;
+		}
+		if(oldPos == null && newPos == null){
+			return true;
+		}
+		if(oldPos.length != newPos.length){
+			return false;
+		}
+		for(int i=0; i<oldPos.length; i++){
+			if(oldPos[i].size() != newPos[i].size()){
+				return false;
+			}
+		}
+		return true;
+	}
+    
+    private boolean checkObjectChange(StateObservation before, StateObservation after){
+    	ArrayList<Observation>[] oldPos = before.getImmovablePositions();
+		ArrayList<Observation>[] newPos = after.getImmovablePositions();
+		if(!isSameLength(oldPos, newPos)){
+			//return true;
+		}
+		
+    	oldPos = before.getMovablePositions();
+		newPos = after.getMovablePositions();
+		if(!isSameLength(oldPos, newPos)){
+			//return true;
+		}
+		
+		oldPos = before.getNPCPositions();
+		newPos = after.getNPCPositions();
+		if(!isSameLength(oldPos, newPos)){
+			return true;
+		}
+		
+		oldPos = before.getPortalsPositions();
+		newPos = after.getPortalsPositions();
+		if(!isSameLength(oldPos, newPos)){
+			return true;
+		}
+		
+		oldPos = before.getResourcesPositions();
+		newPos = after.getResourcesPositions();
+		if(!isSameLength(oldPos, newPos)){
+			return true;
+		}
+		
+	    return false;
+    }
+    
+    private boolean checkObjectFront(StateObservation state){
+    	Vector2d infrontOfPlayer = state.getAvatarPosition().mul(1.0 / state.getBlockSize()).add(state.getAvatarOrientation());
+    	return state.getObservationGrid()[(int)infrontOfPlayer.x][(int)infrontOfPlayer.y].size() > 0;
+    }
+    
     public SingleTreeNode expand() {
     	int bestAction = 0;
         double bestValue = -1;
     	
+        ACTIONS tempPrev = ACTIONS.ACTION_NIL;
+        if(previousAction() >= 0){
+        	tempPrev = Agent.actions[previousAction()];
+        }
+        
         bestAction = previousAction();
     	if(m_rnd.nextDouble() > Agent.expansionProb || bestAction < 0 || children[bestAction] != null){
 	        for (int i = 0; i < children.length; i++) {
 	            double x = m_rnd.nextDouble();
 	            if (x > bestValue && children[i] == null) {
+	            	StateObservation tempState = state.copy();
+	            	tempState.advance(Agent.actions[i]);
+	            	if(Agent.actions[i] == ACTIONS.ACTION_USE && 
+	            			checkObjectFront(state) && !checkObjectChange(state, tempState)){
+	            		continue;
+	            	}
+	            	if(ACTIONS.isMoving(Agent.actions[i]) && 
+	            			state.getAvatarPosition().equals(tempState.getAvatarPosition()) && 
+	            			state.getAvatarOrientation().equals(tempState.getAvatarOrientation())){
+	            		continue;
+	            	}
 	                bestAction = i;
 	                bestValue = x;
 	            }
 	        }
     	}
-
+    	
         StateObservation nextState = state.copy();
+        if(bestAction < 0){
+        	for(int i=0; i < Agent.actions.length; i++){
+        		if(Agent.actions[i] == ACTIONS.ACTION_NIL){
+        			bestAction = i;
+        			break;
+        		}
+        	}
+        }
         nextState.advance(Agent.actions[bestAction]);
-
         SingleTreeNode tn = new SingleTreeNode(nextState, this, this.m_rnd, this.repetition);
         
-        ACTIONS tempPrev = ACTIONS.ACTION_NIL;
-        if(previousAction() >= 0){
-        	tempPrev = Agent.actions[previousAction()];
-        }
         if(tempPrev == ACTIONS.ACTION_NIL){
         	if(Agent.actions[bestAction] == ACTIONS.ACTION_NIL){
         		if((int)Math.round(tn.repetition.nilHold) < Agent.dataBonus.length){
@@ -183,10 +262,6 @@ public class SingleTreeNode
         return tn;
     }
     
-    public double getRayleighCDF(double input){
-    	return (1 - Math.exp(-Math.pow(input, 2) / (2 * Math.pow(Agent.sigmaRayleigh, 2))));
-    }
-    
     public SingleTreeNode uct() {
 
         SingleTreeNode selected = null;
@@ -194,16 +269,22 @@ public class SingleTreeNode
         for (SingleTreeNode child : this.children)
         {
             double hvVal = child.totValue;
-            double childValue =  Agent.mixmax * maxValue + (1 - Agent.mixmax) * hvVal / (child.nVisits + this.epsilon);
+            double childValue =  Agent.mixmax * child.maxValue + (1 - Agent.mixmax) * hvVal / (child.nVisits + this.epsilon);
 
             childValue = Utils.normalise(childValue, bounds[0], bounds[1]);
 
-//            double uctValue = childValue +
-//                    Agent.K * Math.sqrt(Math.log(this.nVisits + 1) / (child.nVisits + this.epsilon)) + 
-//                    child.bonusValue * (1 - Agent.getActionBonus(child.actionLength));
+            double finalValue = child.bonusValue;
+            if(Agent.parentBonusAffect && child.parent != null){
+            	SingleTreeNode temp = child.parent;
+            	while(temp.parent != null){
+            		finalValue *= temp.bonusValue;
+            		temp = temp.parent;
+            	}
+            }
+            
             double uctValue = childValue +
                   Agent.K * Math.sqrt(Math.log(this.nVisits + 1) / (child.nVisits + this.epsilon)) + 
-                  Agent.selectionBonus * child.bonusValue;
+                  Agent.selectionBonus * finalValue;
             
             // small sampleRandom numbers: break ties in unexpanded nodes
             uctValue = Utils.noise(uctValue, this.epsilon, this.m_rnd.nextDouble());     //break ties randomly
@@ -219,7 +300,7 @@ public class SingleTreeNode
         {
             throw new RuntimeException("Warning! returning null: " + bestValue + " : " + this.children.length);
         }
-
+//        System.out.println(bestValue);
         return selected;
     }
 

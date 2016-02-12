@@ -93,7 +93,8 @@ public class Agent extends AbstractPlayer{
 				pastAction != ACTIONS.ACTION_USE && pastAction != ACTIONS.ACTION_NIL){
 			StateObservation tempState = stateObs.copy();
 			tempState.advance(pastAction);
-			if(tempState.getAvatarPosition().equals(stateObs.getAvatarPosition())){
+			if(tempState.getAvatarPosition().equals(stateObs.getAvatarPosition()) &&
+				tempState.getAvatarOrientation().equals(stateObs.getAvatarOrientation())){
 				moves = 0;
 				nilMoves = 0;
 				currentState = DECIDE_ACTION;
@@ -113,6 +114,7 @@ public class Agent extends AbstractPlayer{
 				}
 			}
 			else{
+				automatedPlayer.act(stateObs, elapsedTimer);
 				currentAction = ACTIONS.ACTION_NIL;
 				nilMoves = temp;
 				if(temp > 1){
@@ -121,6 +123,7 @@ public class Agent extends AbstractPlayer{
 			}
 			break;
 		case REPEAT_MOVE:
+			automatedPlayer.act(stateObs, elapsedTimer);
 			currentAction = pastAction;
 			if(moves >= 1){
 				moves -= 1;
@@ -130,6 +133,7 @@ public class Agent extends AbstractPlayer{
 			}
 			break;
 		case REPEAT_NIL:
+			automatedPlayer.act(stateObs, elapsedTimer);
 			currentAction = ACTIONS.ACTION_NIL;
 			if(nilMoves >= 1){
 				nilMoves -= 1;

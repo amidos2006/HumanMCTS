@@ -3,12 +3,14 @@ package controllers.oldAdjMCTS;
 import java.util.ArrayList;
 import java.util.Random;
 
+import core.game.Observation;
 import core.game.StateObservation;
 import core.player.AbstractPlayer;
 import ontology.Types;
 import ontology.Types.ACTIONS;
 import tools.ElapsedCpuTimer;
 import tools.IO;
+import tools.Vector2d;
 
 /**
  * Created with IntelliJ IDEA.
@@ -20,12 +22,13 @@ import tools.IO;
 public class Agent extends AbstractPlayer {
 
 	public static boolean wholeTree = true;
-	public static double mixmax = 0;
-	public static double selectionBonus = 0;
-	public static double sigmaRayleigh = 2;
+	public static double mixmax = 0.25;
+	public static double enlargeMaxValue = 1;
+	public static double selectionBonus = 1;
+	public static double exploreFraction = 0.25;
 	public static double expansionProb = 0;
 	public static double randomProb = 0;
-	public static String currentGame;
+	public static double higherNIL = 1;
 	
 	public static int previousAction = -1;
 	public static int actionRepeat = 0;
@@ -37,6 +40,8 @@ public class Agent extends AbstractPlayer {
     public static int ROLLOUT_DEPTH = 10;
     public static double K = Math.sqrt(2);
     public static Types.ACTIONS[] actions;
+    public static int[][] visited;
+    public static double maxVisited;
 
     /**
      * Random generator for the agent.
@@ -66,6 +71,10 @@ public class Agent extends AbstractPlayer {
         //Create the player.
         mctsPlayer = new SingleMCTSPlayer(new Random());
         
+        ArrayList<Observation>[][] temp = so.getObservationGrid();
+        visited = new int[temp.length][temp[0].length];
+        maxVisited = 1;
+        
         actionBonus = new ArrayList<Double>();
         nilBonus = new ArrayList<Double>();
         
@@ -76,7 +85,7 @@ public class Agent extends AbstractPlayer {
         	actionBonus.add(Double.parseDouble(values[i]));
         }
         
-        values = reader.readFile("nil.txt");
+        values = reader.readFile("nil.txt")[0].split(",");
         nilBonus.add(0.0);
         for (int i=1; i<values.length; i++){
         	nilBonus.add(Double.parseDouble(values[i]));
@@ -104,6 +113,11 @@ public class Agent extends AbstractPlayer {
      */
     public Types.ACTIONS act(StateObservation stateObs, ElapsedCpuTimer elapsedTimer) {
 
+    	Vector2d playerPos = stateObs.getAvatarPosition().mul(1.0 / stateObs.getBlockSize());
+    	visited[(int)playerPos.x][(int)playerPos.y] += 1;
+    	if(visited[(int)playerPos.x][(int)playerPos.y] > maxVisited){
+    		maxVisited = visited[(int)playerPos.x][(int)playerPos.y];
+    	}
         //Set the state observation object as the new root of the tree.
         mctsPlayer.init(stateObs);
 

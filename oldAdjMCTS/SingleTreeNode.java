@@ -1,19 +1,21 @@
 package controllers.oldAdjMCTS;
 
+import java.util.ArrayList;
 import java.util.Random;
 
-import javax.swing.plaf.nimbus.NimbusLookAndFeel;
-
+import core.game.Observation;
 import core.game.StateObservation;
 import ontology.Types;
 import ontology.Types.ACTIONS;
 import tools.ElapsedCpuTimer;
 import tools.Utils;
+import tools.Vector2d;
 
 public class SingleTreeNode
 {
     private static final double HUGE_NEGATIVE = -10000000.0;
     private static final double HUGE_POSITIVE =  10000000.0;
+    private static final SingleTreeNode unexpanded = new SingleTreeNode(null);
     public static double epsilon = 1e-6;
     public static double egreedyEpsilon = 0.05;
     public StateObservation state;
@@ -22,6 +24,7 @@ public class SingleTreeNode
     public double totValue;
     public double maxValue;
     public double bonusValue;
+    public double penaltyValue;
     public int actionRepeat;
     public int nilRepeat;
     public int nVisits;
@@ -40,6 +43,7 @@ public class SingleTreeNode
         totValue = 0.0;
         maxValue = 0.0;
         bonusValue = 0.0;
+        penaltyValue = 0.0;
         this.actionRepeat = actRepeat;
         this.nilRepeat = nilRepeat;
         if(parent != null)
@@ -106,15 +110,112 @@ public class SingleTreeNode
     	return -1;
     }
 
+    private boolean isDestructed(ArrayList<Observation>[] oldPos, ArrayList<Observation>[] newPos, int shootingType){
+		if((oldPos == null && newPos != null) || (oldPos == null && newPos == null)){
+			return false;
+		}
+		if(oldPos != null && newPos == null){
+			for(int i=0; i<oldPos.length; i++){
+				for(Observation o:oldPos[i]){
+					if(o.itype != shootingType){
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+		
+		for(int i=0; i<oldPos.length; i++){
+			if(i >= newPos.length || oldPos[i].size() > newPos[i].size()){
+				for(Observation o:oldPos[i]){
+					if(o.itype != shootingType){
+						return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
+    
+    private boolean checkObjectChange(StateObservation before, StateObservation after){
+    	ArrayList<Observation>[] oldPos = before.getImmovablePositions();
+		ArrayList<Observation>[] newPos = after.getImmovablePositions();
+		int shootingType = -1;
+		ArrayList<Observation>[] bullets = after.getFromAvatarSpritesPositions();
+		if(bullets.length > 0){
+			for(int i=0; i<bullets.length; i++){
+				for(Observation o:bullets[i]){
+					shootingType = o.itype;
+					break;
+				}
+				if(shootingType != -1){
+					break;
+				}
+			}
+		}
+		if(isDestructed(oldPos, newPos, shootingType)){
+			return true;
+		}
+		
+    	oldPos = before.getMovablePositions();
+		newPos = after.getMovablePositions();
+		if(isDestructed(oldPos, newPos, shootingType)){
+			return true;
+		}
+		
+		oldPos = before.getNPCPositions();
+		newPos = after.getNPCPositions();
+		if(isDestructed(oldPos, newPos, shootingType)){
+			return true;
+		}
+		
+		oldPos = before.getPortalsPositions();
+		newPos = after.getPortalsPositions();
+		if(isDestructed(oldPos, newPos, shootingType)){
+			return true;
+		}
+		
+		oldPos = before.getResourcesPositions();
+		newPos = after.getResourcesPositions();
+		if(isDestructed(oldPos, newPos, shootingType)){
+			return true;
+		}
+		
+	    return false;
+    }
+    
+    private boolean checkObjectFront(StateObservation state){
+    	Vector2d infrontOfPlayer = state.getAvatarPosition().mul(1.0 / state.getBlockSize()).add(state.getAvatarOrientation());
+    	return state.getObservationGrid()[(int)infrontOfPlayer.x][(int)infrontOfPlayer.y].size() > 0;
+    }
+    
     public SingleTreeNode expand() {
     	int bestAction = 0;
         double bestValue = -1;
     	
+        ACTIONS tempPrev = ACTIONS.ACTION_NIL;
+        if(previousAction() >= 0){
+        	tempPrev = Agent.actions[previousAction()];
+        }
+        
         bestAction = previousAction();
     	if(m_rnd.nextDouble() > Agent.expansionProb || bestAction < 0 || children[bestAction] != null){
 	        for (int i = 0; i < children.length; i++) {
 	            double x = m_rnd.nextDouble();
 	            if (x > bestValue && children[i] == null) {
+	            	StateObservation tempState = state.copy();
+	            	tempState.advance(Agent.actions[i]);
+	            	if(Agent.actions[i] == ACTIONS.ACTION_USE && 
+	            			checkObjectFront(state) && !checkObjectChange(state, tempState)){
+	            		children[i] = unexpanded;
+	            		continue;
+	            	}
+	            	if(ACTIONS.isMoving(Agent.actions[i]) && 
+	            			state.getAvatarPosition().equals(tempState.getAvatarPosition()) && 
+	            			state.getAvatarOrientation().equals(tempState.getAvatarOrientation())){
+	            		children[i] = unexpanded;
+	            		continue;
+	            	}
 	                bestAction = i;
 	                bestValue = x;
 	            }
@@ -122,22 +223,29 @@ public class SingleTreeNode
     	}
 
         StateObservation nextState = state.copy();
+        if(bestAction < 0){
+        	for(int i=0; i < Agent.actions.length; i++){
+        		if(Agent.actions[i] == ACTIONS.ACTION_NIL){
+        			bestAction = i;
+        			break;
+        		}
+        	}
+        }
         nextState.advance(Agent.actions[bestAction]);
 
         SingleTreeNode tn = new SingleTreeNode(nextState, this, this.m_rnd, this.actionRepeat, this.nilRepeat);
         
-        ACTIONS tempPrev = ACTIONS.ACTION_NIL;
-        if(previousAction() >= 0){
-        	System.out.println(previousAction());
-        	tempPrev = Agent.actions[previousAction()];
-        }
         if(tempPrev == ACTIONS.ACTION_NIL){
         	if(tempPrev == Agent.actions[bestAction]){
-        		tn.bonusValue = Agent.getBonus(Agent.nilBonus, tn.nilRepeat);
+        		tn.bonusValue = Agent.higherNIL * Agent.getBonus(Agent.nilBonus, tn.nilRepeat);
+        		if(tn.nilRepeat > 1)
+        		System.out.println("NIL->NIL: " + tn.nilRepeat + " " + tn.bonusValue);
         		tn.nilRepeat += 1;
         	}
         	else{
         		tn.bonusValue = 1 - Agent.getBonus(Agent.nilBonus, tn.nilRepeat);
+        		if(tn.nilRepeat > 1)
+        		System.out.println("NIL->ACTION: " + tn.nilRepeat + " " + tn.bonusValue);
         		tn.nilRepeat = 0;
         		tn.actionRepeat = 1;
         	}
@@ -145,15 +253,23 @@ public class SingleTreeNode
         else{
         	if(tempPrev == Agent.actions[bestAction]){
         		tn.bonusValue = Agent.getBonus(Agent.actionBonus, tn.actionRepeat);
+        		if(tn.actionRepeat > 1)
+        		System.out.println("Action->ACTION: " + tn.actionRepeat + " " + tn.bonusValue);
         		tn.actionRepeat += 1;
         	}
         	else if(Agent.actions[bestAction] == ACTIONS.ACTION_NIL){
-        		tn.bonusValue = 0.92 * ( 1- Agent.getBonus(Agent.actionBonus,tn.actionRepeat));
+        		tn.bonusValue = 0.9 * ( 1- Agent.getBonus(Agent.actionBonus, tn.actionRepeat));
+        		if(tn.actionRepeat > 1)
+        		System.out.println("Action->NIL: " + tn.actionRepeat + " " + tn.bonusValue);
         		tn.nilRepeat = 1;
         		tn.actionRepeat = 0;
         	}
         	else{
-        		tn.bonusValue = 0.08 * (1 - Agent.getBonus(Agent.actionBonus,tn.actionRepeat));
+        		if(Agent.actions[bestAction] != ACTIONS.reverseACTION(tempPrev)){
+        			tn.bonusValue = 0.1 * (1 - Agent.getBonus(Agent.actionBonus, tn.actionRepeat));
+        		}
+        		if(tn.actionRepeat > 1)
+        		System.out.println("Action->NewAction: " + tn.actionRepeat + " " + tn.bonusValue);
         		tn.actionRepeat = 1;
         	}
         }
@@ -162,24 +278,30 @@ public class SingleTreeNode
         return tn;
     }
     
-    public double getRayleighCDF(double input){
-    	return (1 - Math.exp(-Math.pow(input, 2) / (2 * Math.pow(Agent.sigmaRayleigh, 2))));
-    }
-    
     public SingleTreeNode uct() {
 
         SingleTreeNode selected = null;
         double bestValue = -Double.MAX_VALUE;
         for (SingleTreeNode child : this.children)
         {
+        	if(child == unexpanded){
+        		System.out.println("------------------Skip Stupid Node------------------");
+        		continue;
+        	}
             double hvVal = child.totValue;
-            double childValue =  Agent.mixmax * maxValue + (1 - Agent.mixmax) * hvVal / (child.nVisits + this.epsilon);
-
+            double mxVal = child.maxValue;
+            if(mxVal > Agent.enlargeMaxValue){
+            	mxVal *= Agent.enlargeMaxValue;
+            }
+            double childValue =  Agent.mixmax * mxVal + (1 - Agent.mixmax) * hvVal / (child.nVisits + this.epsilon);
+            Vector2d playerPos = child.state.getAvatarPosition().mul(1.0 / child.state.getBlockSize());
+            double exploreScore = (Agent.maxVisited - Agent.visited[(int)playerPos.x][(int)playerPos.y]) / 
+            		(Agent.maxVisited);
             childValue = Utils.normalise(childValue, bounds[0], bounds[1]);
 
             double uctValue = childValue +
                   Agent.K * Math.sqrt(Math.log(this.nVisits + 1) / (child.nVisits + this.epsilon)) + 
-                  Agent.selectionBonus * child.bonusValue;
+                  Agent.selectionBonus * child.bonusValue + Agent.exploreFraction * exploreScore;
             
             // small sampleRandom numbers: break ties in unexpanded nodes
             uctValue = Utils.noise(uctValue, this.epsilon, this.m_rnd.nextDouble());     //break ties randomly
@@ -224,7 +346,6 @@ public class SingleTreeNode
 
         }
 
-
         if (selected == null)
         {
             throw new RuntimeException("Warning! returning null: " + this.children.length);
@@ -246,11 +367,6 @@ public class SingleTreeNode
         while (!finishRollout(rollerState,thisDepth)) {
         	
             int action = m_rnd.nextInt(Agent.NUM_ACTIONS);
-            if(m_rnd.nextDouble() < Agent.randomProb && 
-            		currentAction != Types.ACTIONS.ACTION_NIL){
-            	action = Agent.NUM_ACTIONS + 1;
-            }
-            
             if(action < Agent.actions.length){
             	currentAction = Agent.actions[action];
             }
@@ -268,7 +384,7 @@ public class SingleTreeNode
 
         return delta;
     }
-
+    
     public double value(StateObservation a_gameState) {
 
         boolean gameOver = a_gameState.isGameOver();
@@ -280,7 +396,7 @@ public class SingleTreeNode
 
         if(gameOver && win == Types.WINNER.PLAYER_WINS)
             rawScore += HUGE_POSITIVE;
-
+        
         return rawScore;
     }
 

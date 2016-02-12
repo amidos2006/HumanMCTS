@@ -20,12 +20,11 @@ import tools.IO;
 public class Agent extends AbstractPlayer {
 
 	public static boolean wholeTree = true;
+	public static boolean parentBonusAffect = false;
 	public static double mixmax = 0;
-	public static double selectionBonus = 0;
-	public static double sigmaRayleigh = 2;
+	public static double selectionBonus = 0.5;
 	public static double expansionProb = 0;
 	public static double randomProb = 0;
-	public static String currentGame;
 	
 	public static int previousAction = -1;
 	public static RowOdds previousRepetition = new RowOdds();
@@ -64,7 +63,7 @@ public class Agent extends AbstractPlayer {
         mctsPlayer = new SingleMCTSPlayer(new Random());
         
         IO reader = new IO();
-        String[] values = reader.readFile("oddsdata/" + currentGame + "_action_rowodds.csv");
+        String[] values = reader.readFile("oddsdata/aliens_action_rowodds.csv");
         
         dataBonus = new RowOdds[values.length];
         for(int i=0; i<dataBonus.length; i++){
@@ -76,19 +75,69 @@ public class Agent extends AbstractPlayer {
         	if(data.length <= 1){
         		continue;
         	}
-        	dataBonus[i].actionNil = Double.parseDouble(data[1]);
-        	dataBonus[i].actionHold = Double.parseDouble(data[2]);
-        	dataBonus[i].actionNewAction = Double.parseDouble(data[3]);
+        	dataBonus[i].actionNil += Double.parseDouble(data[1]);
+        	dataBonus[i].actionHold += Double.parseDouble(data[2]);
+        	dataBonus[i].actionNewAction += Double.parseDouble(data[3]);
         }
         
-        values = reader.readFile("oddsdata/" + currentGame + "_nil_rowodds.csv");
+        values = reader.readFile("oddsdata/pacman_action_rowodds.csv");
         for (int i=1; i<values.length; i++){
         	String[] data = values[i].split(",");
         	if(data.length <= 1){
         		continue;
         	}
-        	dataBonus[i].nilHold = Double.parseDouble(data[1]);
-        	dataBonus[i].nilAction = Double.parseDouble(data[2]);
+        	dataBonus[i].actionNil += Double.parseDouble(data[1]);
+        	dataBonus[i].actionHold += Double.parseDouble(data[2]);
+        	dataBonus[i].actionNewAction += Double.parseDouble(data[3]);
+        }
+        
+        values = reader.readFile("oddsdata/zelda_action_rowodds.csv");
+        for (int i=1; i<values.length; i++){
+        	String[] data = values[i].split(",");
+        	if(data.length <= 1){
+        		continue;
+        	}
+        	dataBonus[i].actionNil += Double.parseDouble(data[1]);
+        	dataBonus[i].actionHold += Double.parseDouble(data[2]);
+        	dataBonus[i].actionNewAction += Double.parseDouble(data[3]);
+        }
+        
+        values = reader.readFile("oddsdata/aliens_nil_rowodds.csv");
+        for (int i=1; i<values.length; i++){
+        	String[] data = values[i].split(",");
+        	if(data.length <= 1){
+        		continue;
+        	}
+        	dataBonus[i].nilHold += Double.parseDouble(data[1]);
+        	dataBonus[i].nilAction += Double.parseDouble(data[2]);
+        }
+        
+        values = reader.readFile("oddsdata/pacman_nil_rowodds.csv");
+        for (int i=1; i<values.length; i++){
+        	String[] data = values[i].split(",");
+        	if(data.length <= 1){
+        		continue;
+        	}
+        	dataBonus[i].nilHold += Double.parseDouble(data[1]);
+        	dataBonus[i].nilAction += Double.parseDouble(data[2]);
+        }
+        
+        values = reader.readFile("oddsdata/zelda_nil_rowodds.csv");
+        for (int i=1; i<values.length; i++){
+        	String[] data = values[i].split(",");
+        	if(data.length <= 1){
+        		continue;
+        	}
+        	dataBonus[i].nilHold += Double.parseDouble(data[1]);
+        	dataBonus[i].nilAction += Double.parseDouble(data[2]);
+        }
+        
+        for(int i=0; i<dataBonus.length; i++){
+        	dataBonus[i].actionHold /= 3;
+        	dataBonus[i].actionNewAction /= 3;
+        	dataBonus[i].actionNil /= 3;
+        	dataBonus[i].nilAction /= 3;
+        	dataBonus[i].nilHold /= 3;
         }
     }
 
@@ -142,7 +191,6 @@ public class Agent extends AbstractPlayer {
         }
         
         previousAction = action;
-        
         //... and return it.
         return actions[action];
     }
